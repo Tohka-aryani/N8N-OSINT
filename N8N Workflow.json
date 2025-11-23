@@ -1,0 +1,1616 @@
+{
+  "name": "Workflow Beta",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Get input item (from previous node)\nconst item = $input.first().json;\n\n// Extract message text (from Telegram update or other source)\nconst messageText = item?.message?.text || \"\";\n\n// Extended list of common stopwords\nconst stopWords = [\n  \"get\", \"me\", \"news\", \"about\", \"the\", \"a\", \"an\", \"to\", \"for\", \"on\", \"in\", \"of\",\n  \"related\", \"find\", \"show\", \"tell\", \"give\", \"bring\", \"latest\", \"update\", \"info\",\n  \"information\", \"regarding\", \"regards\", \"please\", \"want\", \"like\", \"from\", \"with\",\n  \"by\", \"this\", \"that\", \"these\", \"those\", \"is\", \"are\", \"was\", \"were\", \"and\", \"at\", \"you\",\"i\", \"retrieve\",\"what\"\n];\n\n// Function to extract keywords and multi-word concepts\nfunction extractKeyword(text) {\n  if (!text) return \"\";\n\n  // Normalize text\n  let cleaned = text\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s\\-]/g, \" \") // keep letters, numbers, hyphens\n    .replace(/\\s+/g, \" \") // normalize spaces\n    .trim();\n\n  const words = cleaned.split(\" \");\n  const filtered = words.filter(w => w && !stopWords.includes(w));\n\n  // Join keywords intelligently\n  let keyword = filtered.join(\" \");\n\n  // Handle known multi-word or connected patterns like \"thailand cambodia conflict\"\n  // Try to reconstruct conflict/topic phrases\n  keyword = keyword\n    .replace(/\\b(vs|versus)\\b/g, \"vs\")\n    .replace(/\\s{2,}/g, \" \")\n    .trim();\n\n  return keyword;\n}\n\n// Extract keyword\nconst keyword = extractKeyword(messageText);\n\n// Return in n8n-compatible format\nreturn [\n  {\n    json: {\n      sessionId: item?.message?.from?.id || null,\n      action: \"search_news\",\n      keyword: keyword || null,\n      original_text: messageText\n    }\n  }\n];\n\n"
+      },
+      "id": "ac28370d-8b24-4e34-bc1c-ceb5408dedaf",
+      "name": "Extract Search Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://newsapi.org/v2/everything?qInTitle=\"{{ $json.keyword }}\"&sortBy=publishedAt&apiKey=0d84da4e851844d58bd5a17d8190d895&language=en&pageSize=10",
+        "options": {}
+      },
+      "id": "60915c7d-9064-45f8-97b2-330b259622f9",
+      "name": "Search Google News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Google News search results\nconst queryData = $('Extract Search Query').first().json;\n\n// Check if there's an error in the query extraction\nif (queryData.error) {\n  return {\n    json: {\n      source: 'Error',\n      title: 'Search Query Error',\n      content: queryData.error,\n      url: '',\n      timestamp: new Date().toISOString(),\n      relevance: 'N/A',\n      author: 'N/A',\n      sourceName: 'N/A'\n    }\n  };\n}\n\nconst query = queryData?.searchQuery || ''; // ensure a safe fallback\nconst response = $input.first().json;\nconst articles = response.articles || [];\n\nconst results = articles.map(article => {\n  const title = article.title || '';\n  const description = article.description || '';\n  const content = article.content || 'No content';\n  const combinedText = (title + ' ' + description).toLowerCase();\n  const relevance = query ? (combinedText.includes(query.toLowerCase()) ? 'High' : 'Medium') : 'Unknown';\n\n  return {\n    source: 'Google News',\n    title: title || 'No title',\n    content,\n    url: article.url || '',\n    timestamp: article.publishedAt || new Date().toISOString(),\n    relevance,\n    author: article.author || 'Unknown',\n    sourceName: article.source?.name || 'Unknown'\n  };\n});\n\nreturn results.map(result => ({ json: result }));"
+      },
+      "id": "d5949951-471a-4c26-9f3e-742cd3eb827a",
+      "name": "Process Google News Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-keyword-feed",
+        "options": {
+          "responseData": "allEntries"
+        }
+      },
+      "id": "d2b3805b-147b-422e-8b4b-b539766c3366",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        464
+      ],
+      "webhookDescription": "Receives Telegram keyword matches via POST",
+      "webhookId": "04ea61e2-f3bc-4502-b03e-209da7e2d8ad"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "subreddit": "globalnews",
+        "keyword": "={{ $json.keyword }}",
+        "limit": 10,
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.reddit",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -64
+      ],
+      "id": "5d10d3dd-ea3b-448b-961e-40285084e14c",
+      "name": "Search for a post",
+      "credentials": {
+        "redditOAuth2Api": {
+          "id": "AKTChzDqb4ztA2P7",
+          "name": "Reddit account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d0b9d83f-84d3-487b-b9bb-cb892fd45882",
+              "name": "Source",
+              "value": "={{ $json.Channel }}",
+              "type": "string"
+            },
+            {
+              "id": "2068b9ea-602c-48dc-abea-482bbbdd9243",
+              "name": "Title",
+              "value": "={{ $json.Message }}",
+              "type": "string"
+            },
+            {
+              "id": "c2c4d786-4087-4bf8-b8bf-839794f85d82",
+              "name": "Link",
+              "value": "={{ $json.Link }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        464
+      ],
+      "id": "068614db-b614-450e-8ec2-17ca4d193f11",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  item.json.myNewField = 1;\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        -64
+      ],
+      "id": "7038621a-b59a-4520-af6a-3f5f0c6dc586",
+      "name": "Process Reddit Results"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        672,
+        32
+      ],
+      "id": "efa3e1d8-ea27-40cf-a99d-59eb8d8bc5b2",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1040,
+        256
+      ],
+      "id": "51b3ef21-8d69-4f67-a05c-e62f0e33601d",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "cmi5idGfRJBwBdwx",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d0b9d83f-84d3-487b-b9bb-cb892fd45882",
+              "name": "Source",
+              "value": "={{ $json.Source }}",
+              "type": "string"
+            },
+            {
+              "id": "2068b9ea-602c-48dc-abea-482bbbdd9243",
+              "name": "Title",
+              "value": "={{ $json.Title }}",
+              "type": "string"
+            },
+            {
+              "id": "81bb5ff9-d89d-4344-a8a1-99a6cf9bdfd6",
+              "name": "URL",
+              "value": "={{ $json.URL }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        32
+      ],
+      "id": "29b9ceef-49f5-47da-b748-41bf0e4c4ee0",
+      "name": "Consolidate Data"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"Source\": \"\",\n  \"Title\": [\"\"],\n  \"URL\": \"\",\n  \"Risk Level\": [\"High\", \"Medium\", \"Low\"],\n  \"Sentiment\": [\"Positive\", \"Negative\", \"Neutral\"]\n}\n"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1328,
+        240
+      ],
+      "id": "b26c2e31-ecf3-472c-930d-5179f1cc1ed1",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ba27b4c4-35da-451b-a82d-bcea531ef041",
+              "name": "Source",
+              "value": "=SubReddit {{ $json.subreddit }}",
+              "type": "string"
+            },
+            {
+              "id": "8ec15b01-e191-4b6c-8da7-05b33abe4e26",
+              "name": "Title",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "3f9b2c00-9a41-4072-b863-896cc2c261c3",
+              "name": "URL",
+              "value": "={{ $json.url_overridden_by_dest }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        -64
+      ],
+      "id": "cf99e75c-1902-41aa-9d2c-4a7f4ca53a83",
+      "name": "Assign Fields (Reddit)"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d0b9d83f-84d3-487b-b9bb-cb892fd45882",
+              "name": "Source",
+              "value": "={{ $json.source }}",
+              "type": "string"
+            },
+            {
+              "id": "2068b9ea-602c-48dc-abea-482bbbdd9243",
+              "name": "Title",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "d807cbfb-4bb1-40af-990b-b18c8688d2ef",
+              "name": "URL",
+              "value": "={{ $json.url }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        128
+      ],
+      "id": "0716c99b-15df-4b0f-8a33-018f1df1e01e",
+      "name": "Assign Fields (Google)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Function node: flatten \"output\" and normalize arrays for Upsert Row\n// Includes Sentiment and Link fields\n\nconst normalize = (v) => {\n  if (v === null || v === undefined) return '';\n  if (Array.isArray(v)) return v.map(x => String(x)).join('\\n');\n  return String(v);\n};\n\nreturn $input.all().map(item => {\n  const o = item.json.output || {};\n  return {\n    json: {\n      Source: normalize(o.Source),\n      Title: normalize(o.Title),\n      URL: normalize(o.URL),\n      RiskLevel: normalize(o[\"Risk Level\"]),\n      Sentiment: normalize(o.Sentiment)\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        32
+      ],
+      "id": "9793821b-b049-4a39-a8a7-5198fae63e02",
+      "name": "Text Configuration"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Function node\n// Converts Telegram keyword monitor webhook JSON into a clean table array\n\n// Access webhook data\nconst data = $json.body?.results || [];\n\n// Transform into table-like structured data\nconst table = data.map(item => ({\n  Channel: item.channel,\n  Keyword: item.keyword,\n  Timestamp: item.timestamp,\n  Message: item.message,\n  Link: item.link\n}));\n\n// Return each entry as an n8n item\nreturn table.map(row => ({ json: row }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        464
+      ],
+      "id": "100fa4d9-8708-45a7-a0cd-e37fbdf22b0e",
+      "name": "Organize Data in Table"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -448,
+        32
+      ],
+      "id": "b04395d8-9f43-4d71-8c12-dc09d22741b0",
+      "name": "Telegram Trigger",
+      "webhookId": "e23089fc-e7d7-4570-849c-9bbb50c0f672",
+      "credentials": {
+        "telegramApi": {
+          "id": "wFpb9tMlAtJQ8D8p",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b61f0df9-a5b2-4f57-99e3-04eca10c6ea4",
+              "leftValue": "={{ $json.RiskLevel }}",
+              "rightValue": "=High Risk",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1696,
+        32
+      ],
+      "id": "8496a205-bb52-4048-84b6-61c7279db209",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.from.id }}",
+        "text": "=News Results based on Geopotical Issue: {{ $('Extract Search Query').item.json.keyword }}\n\nSource Material: {{ $json.Source }}\n\nTitle of Article: {{ $json.Title }}\n\nAssigned Risk Level: {{ $json.RiskLevel }}\n\nURL: {{ $json.URL }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2144,
+        -64
+      ],
+      "id": "58654c94-06e3-4d57-ac59-9c579bdbc024",
+      "name": "Send a text message",
+      "webhookId": "9919e39f-7ff6-49bf-a255-9e538d99caa1",
+      "credentials": {
+        "telegramApi": {
+          "id": "wFpb9tMlAtJQ8D8p",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d0b9d83f-84d3-487b-b9bb-cb892fd45882",
+              "name": "Source",
+              "value": "={{ $json.Source }}",
+              "type": "string"
+            },
+            {
+              "id": "2068b9ea-602c-48dc-abea-482bbbdd9243",
+              "name": "Title",
+              "value": "={{ $json.Title }}",
+              "type": "string"
+            },
+            {
+              "id": "d6d67b28-8ad6-4bd7-a031-34fc81bda078",
+              "name": "Link",
+              "value": "={{ $json.Link }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        464
+      ],
+      "id": "e26985ca-3b53-4560-91b0-06bff476574a",
+      "name": "Consolidate Data1"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        624,
+        688
+      ],
+      "id": "36c6c373-481d-4646-9db7-e2c1a87290d8",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "cmi5idGfRJBwBdwx",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"Source\": \"\",\n  \"Title\": [\"\"],\n  \"Link\": \"\",\n  \"Risk Level\": [\"High\", \"Medium\", \"Low\"],\n  \"Sentiment\": [\"Positive\", \"Negative\", \"Neutral\"]\n}\n"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        848,
+        688
+      ],
+      "id": "0edc16a3-6fcb-461b-9776-ee24cbdce0b7",
+      "name": "Structured Output Parser1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Function node: flatten \"output\" and normalize arrays for Upsert Row\n// Includes Sentiment and Link fields\n\nconst normalize = (v) => {\n  if (v === null || v === undefined) return '';\n  if (Array.isArray(v)) return v.map(x => String(x)).join('\\n');\n  return String(v);\n};\n\nreturn $input.all().map(item => {\n  const o = item.json.output || {};\n  return {\n    json: {\n      Source: normalize(o.Source),\n      Title: normalize(o.Title),\n      Link: normalize(o.Link),\n      RiskLevel: normalize(o[\"Risk Level\"]),\n      Sentiment: normalize(o.Sentiment)\n    }\n  };\n});\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        464
+      ],
+      "id": "cfd120d4-ff96-4112-b6fd-83778f4f4b0e",
+      "name": "Text Configuration1"
+    },
+    {
+      "parameters": {
+        "chatId": "7711239474",
+        "text": "=The following data is scraped from Telegram Channels:\n\nSource: {{ $json.Source }}\n\nTitle: {{ $json.Title }}\n\nRisk Level: {{ $json.RiskLevel }}\n\nLink to Source: {{ $json.Link }}\nSentiment Analysis: {{ $json.Sentiment }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1696,
+        368
+      ],
+      "id": "681ba43f-cf6b-4f5c-ad70-5a46457cd349",
+      "name": "Send a text message1",
+      "webhookId": "9919e39f-7ff6-49bf-a255-9e538d99caa1",
+      "credentials": {
+        "telegramApi": {
+          "id": "wFpb9tMlAtJQ8D8p",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo",
+          "mode": "list",
+          "cachedResultName": "High Risk Dataset",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "High Risk",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "Source"
+          ],
+          "schema": [
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "RiskLevel",
+              "displayName": "RiskLevel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1920,
+        -64
+      ],
+      "id": "a035d888-20f8-472d-b4d9-954cd1f43f5e",
+      "name": "Save to High Risk Database",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "39iIpuPgtO3xTtk0",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo",
+          "mode": "list",
+          "cachedResultName": "High Risk Dataset",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2090609386,
+          "mode": "list",
+          "cachedResultName": "Medium/Low Risk",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo/edit#gid=2090609386"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "Source"
+          ],
+          "schema": [
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "RiskLevel",
+              "displayName": "RiskLevel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1920,
+        128
+      ],
+      "id": "887d7080-7f5a-4079-8277-96303cce2bfb",
+      "name": "Save to Medium/Low Risk Database",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "39iIpuPgtO3xTtk0",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b61f0df9-a5b2-4f57-99e3-04eca10c6ea4",
+              "leftValue": "={{ $json.RiskLevel }}",
+              "rightValue": "=High Risk",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        464
+      ],
+      "id": "849e3305-bb8d-413b-9875-ffa4ea36e13e",
+      "name": "Categorization "
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo",
+          "mode": "list",
+          "cachedResultName": "High Risk Dataset",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2090609386,
+          "mode": "list",
+          "cachedResultName": "Medium/Low Risk",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo/edit#gid=2090609386"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "Source"
+          ],
+          "schema": [
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "RiskLevel",
+              "displayName": "RiskLevel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1472,
+        560
+      ],
+      "id": "fdd421a9-91de-4827-85d5-d27f385f9260",
+      "name": "Save to Medium/Low Risk Database1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "39iIpuPgtO3xTtk0",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cleanMarkdown = (text) => {\n  if (!text) return '';\n  return String(text)\n    // Remove bold, italic, underline, code\n    .replace(/(\\*\\*|__|\\*|_)(.*?)\\1/g, '$2')\n    .replace(/`([^`]+)`/g, '$1')\n    // Remove links but keep the link text\n    .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1')\n    // Remove images\n    .replace(/!\\[([^\\]]*)\\]\\([^)]+\\)/g, '$1')\n    // Remove blockquote, headings, list markers\n    .replace(/(^|\\n)[>#*+\\-]+/g, '$1')\n    // Remove remaining markdown symbols (like stray *, _, ~)\n    .replace(/[*_~]/g, '')\n    // Remove newlines and excessive spaces\n    .replace(/\\r?\\n|\\r/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n};\n\nreturn $input.all().map(item => {\n  const src = item.json.Source || '';\n  const title = item.json.Title || '';\n  const link = item.json.Link || '';\n\n  return {\n    json: {\n      Source: cleanMarkdown(src),\n      Title: cleanMarkdown(title),\n      Link: link\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        464
+      ],
+      "id": "5815b089-0a84-49dc-bd4b-f3cf6f6d66fb",
+      "name": "Markdown Removal"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=You are a helpful assistant that performs zero-shot classification and sentiment analysis.\n\nBased on {{ $json.Title }}, classify the content into:\n\nRisk Level: choose only one of the following — High Risk, Medium Risk, or Low Risk.\n\nSentiment: choose only one of the following — Positive, Negative, or Neutral.\n\nOutput Requirements:\n\nExplicitly include all of the following fields:\n\nSource: use exactly the value from {{ $json.Source }} with no modifications or additions.\n\nTitle: use exactly the value from {{ $json.Title }}.\n\nLink: use exactly the value from {{ $json.Link }} with no modifications or additions.\n\nRisk Level: your chosen classification (no duplicates, only one of the three exact labels).\n\nSentiment: your chosen classification (no duplicates, only one of the three exact labels).\n\nThe response must be clean JSON only — no explanations, no extra fields, and no commentary."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        464
+      ],
+      "id": "b3a39300-42bc-4a07-8dbb-5aae798227be",
+      "name": "AI Agent Bravo",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=You are a helpful assistant that performs zero-shot classification and sentiment analysis.\n\nBased on {{ $json.Title }}, classify the content into:\n\nRisk Level: choose only one of the following — High Risk, Medium Risk, or Low Risk.\n\nSentiment: choose only one of the following — Positive, Negative, or Neutral.\n\nOutput Requirements:\n\nExplicitly include all of the following fields:\n\nSource: use exactly the value from {{ $json.Source }} with no modifications or additions.\n\nTitle: use exactly the value from {{ $json.Title }}.\n\nLink: use exactly the value from {{ $json.URL }} with no modifications or additions.\n\nRisk Level: your chosen classification (no duplicates, only one of the three exact labels).\n\nSentiment: your chosen classification (no duplicates, only one of the three exact labels).\n\nThe response must be clean JSON only — no explanations, no extra fields, and no commentary."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        32
+      ],
+      "id": "481c8475-eb18-4bd0-a0c1-00ab294f7c68",
+      "name": "AI Agent Alpha",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo",
+          "mode": "list",
+          "cachedResultName": "High Risk Dataset",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "High Risk",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1jF6LbIzN7bdgR-KGEF181JQ64I1zq4XEjYgphhTLvGo/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "Source"
+          ],
+          "schema": [
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "RiskLevel",
+              "displayName": "RiskLevel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Sentiment",
+              "displayName": "Sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1472,
+        368
+      ],
+      "id": "483588d3-d404-4bdb-b790-60cbf5d05799",
+      "name": "Save to High Risk Database1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "39iIpuPgtO3xTtk0",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Webhook Trigger": [
+      {
+        "json": {
+          "headers": {
+            "host": "localhost:5678",
+            "user-agent": "python-requests/2.31.0",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept": "*/*",
+            "connection": "keep-alive",
+            "x-auth-token": "YOUR_SECRET_TOKEN",
+            "content-length": "20038",
+            "content-type": "application/json"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "results": [
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21992,
+                "timestamp": "2025-10-29T04:29:41+00:00",
+                "message": "Hamas menafikan yang mereka melancarkan serangan ke atas IDF di Rafah menyebabkan seekor IDF cedera parah \n\nHamas juga menyatakan yang bukan mereka lengah lengahkan masa untuk pulangkan jenazah tawanan Israel di Gaza. Tapi jenazah itu di bawah runtuhan sedangkan Israel tak bagi bawak masuk jentera berat\n\nSemalam Hamas dah jumpa satu jenazah tawanan Israel di Gaza tapi selepas itu PM Netanyahu secara tiba tiba mengarahkan IDF melancarkan serangan yang sekaligus melanggar gencatan senjata",
+                "link": "https://t.me/c/-1001873504794/21992"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21989,
+                "timestamp": "2025-10-28T17:40:50+00:00",
+                "message": "TERKINI \n\nISRAEL BOM RAFAH",
+                "link": "https://t.me/c/-1001873504794/21989"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21987,
+                "timestamp": "2025-10-28T17:13:07+00:00",
+                "message": "IDF memaklumkan SEEKOR anggotanya ditembak Sniper Pasukan Pertahanan Palestin di Rafah \n\nIDF mendakwa berlaku serang hendap oleh Pasukan Pertahanan Palestin di Rafah dan pertempuran sengit di sana \n\nIni sejam sebelum arahan Netanyahu tadi untuk IDF melancarkan serangan udara ke atas Gaza",
+                "link": "https://t.me/c/-1001873504794/21987"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21931,
+                "timestamp": "2025-10-27T07:21:34+00:00",
+                "message": "Pertubuhan Palang Merah Antarabangsa sejak semalam hingga hari ini giat melaksanakan operasi mencari jenazah tawanan Israel di Gaza \n\nPihak Briged dilaporkan sudah memberi maklumat kepada persatuan itu berkenaan kedudukan mayat mayat itu di Rafah, Khan Younis, Deir Al Balah dan Bandar Gaza\n\nIsrael dilaporkan memberi lampu hijau kepada Pertubuhan Palang Merah Antarabangsa bagi mencari mayat tawanan Israel di Gaza di kawasan Rafah. Ini kerana lokasi itu di dalam Zon Kuning Gaza dikuasai Israel",
+                "link": "https://t.me/c/-1001873504794/21931"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21911,
+                "timestamp": "2025-10-27T04:24:04+00:00",
+                "message": "TERKINI \n\nSky News melaporkan terdapat 4 kumpulan militan yang disokong Israel di Gaza\n\n1) Militan Ashraf Al-Mansi di Utara Gaza\n\n2) Militan Rami Khals di Timur Bandar Gaza \n\n3) Militan Hossam Al Astal di Tengah Khan Younis Selatan Gaza \n\n4) Geng Yasser Abu Shabab di Timur Rafah Utara Gaza \n\nSemua 4 geng itu kini beroperasi dalam kawasan Zon Kuning yang IDF kuasai sebagai sebahagian daripada Perjanjian Gencatan Senjata Fasa 1",
+                "link": "https://t.me/c/-1001873504794/21911"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21845,
+                "timestamp": "2025-10-25T14:31:13+00:00",
+                "message": "TERKINI \n\nAkhbar Israel Hayom melaporkan yang Hamas masih mempunyai 5 ke 8 jenazah tawanan Israel di Gaza berdasarkan maklumat Perisikan Israel\n\nDisebabkan itu Israel memilih untuk menangguhkan kemasukan bantuan kemanusiaan dan memastikan Lintasan Rafah ditutup kerana tawanan Israel di Gaza masih belum dipulangkan",
+                "link": "https://t.me/c/-1001873504794/21845"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21750,
+                "timestamp": "2025-10-22T06:21:53+00:00",
+                "message": "TERKINI \n\nPasukan Kementerian Dalam Negeri Gaza telah merampas beberapa ATV, kenderaan dan Jip milik Geng Yasser Abu Shabab di Rafah \n\nBeberapa anggota geng itu turut ditangkap",
+                "link": "https://t.me/c/-1001873504794/21750"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21748,
+                "timestamp": "2025-10-22T05:56:14+00:00",
+                "message": "Setakat ini mengikut posisi tentera antarabangsa di Fasa Pertama Gencatan Senjata di Gaza\n\nTentera US, UK, Qatar, Mesir, Türkiye dan UAE- Pusat Pemerintahan Bersama di Tel Aviv \n\nTentera Türkiye, Qatar dan Mesir juga akan membantu mencari jenazah tawanan Israel di Gaza dengan bantuan Majlis Perbandaran Gaza \n\nTentera UK, Perancis, Jerman dan Itali akan membantu mengawal keluar masuk di Lintasan Rafah di bawah Misi Kesatuan Eropah EU",
+                "link": "https://t.me/c/-1001873504794/21748"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21701,
+                "timestamp": "2025-10-20T17:30:24+00:00",
+                "message": "TERKINI \n\nTrak bantuan kemanusiaan dijangka akan memasuki Gaza sekitar malam ini\n\nJumlah awal dari Mesir ialah 380 buah trak. Lintasan Rafah sudah dibuka",
+                "link": "https://t.me/c/-1001873504794/21701"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21687,
+                "timestamp": "2025-10-20T04:33:08+00:00",
+                "message": "TERKINI \n\nDisahkan 2 ekor IOF yang mampus dan 3 cedera parah dalam pertempuran di Rafah semalam\n\nMereka yang gugur ialah Mejar Yaniv Kula berusia 26 tahun dan Staf Sarjan Itay Yavetz berusia 21 Tahun\n\nMereka berdua dari Batalion 932 Briged Nahal berasal dari Modiin\n\nMereka yang tercedera itu ada terkena tembakan Sniper",
+                "link": "https://t.me/c/-1001873504794/21687"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21686,
+                "timestamp": "2025-10-20T03:19:34+00:00",
+                "message": "IDF mengumumkan Jam 2.30 pagi tadi bahawa gencatan senjata bermula semula di Gaza \n\nSebelum itu berlaku pertempuran di Rafah",
+                "link": "https://t.me/c/-1001873504794/21686"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21684,
+                "timestamp": "2025-10-20T03:13:15+00:00",
+                "message": "Wartawan Drop Site US iaitu Ryan Grim memberitahu dari sumber Pegawai US bahawa letupan di Rafah berpunca daripada jentolak D9 Israel menyentuh bom yang tak meletup sebelum ini\n\nBukannya Pasukan Pertahanan Palestin menyerang hendap IDF menggunakan terowong \n\nWalau bagaimanapun meskipun Netanyahu tahu benda ni. Netanyahu menyalahkan Hamas, menghentikan bantuan kemanusiaan dan meneruskan serangan udara sehinggalah Washington menghubungi Israel menghentikan Israel menghentikannya",
+                "link": "https://t.me/c/-1001873504794/21684"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21682,
+                "timestamp": "2025-10-19T10:38:59+00:00",
+                "message": "TERKINI \n\nMenteri Keselamatan Negara Israel meminta agar perang diteruskan semula di Gaza kerana dia mendakwa Hamas sudah langgar gencatan senjata dengan menyerang IOF di Rafah\n\nPadahal IOF join backup Yasser Abu Shabab",
+                "link": "https://t.me/c/-1001873504794/21682"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21681,
+                "timestamp": "2025-10-19T10:36:49+00:00",
+                "message": "PM Israel Benjamin Netanyahu malam tadi mengarahkan Lintasan Rafah ditutup sepenuhnya sehinggalah Hamas memulangkan semua jenazah tawanan Israel yang ada di Gaza",
+                "link": "https://t.me/c/-1001873504794/21681"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21680,
+                "timestamp": "2025-10-19T10:31:47+00:00",
+                "message": "TERKINI \n\nALHAMDULILLAH \n\n2 ekor IOF mampus dan 2 ekor lagi Cedera dalam pertempuran di Rafah. \n\nSebuah kenderaaan IOF meletup dalam kejadian itu\n\nIOF bertindak melancarkan serangan udara ke atas kawasan pertempuran berkenaan \n\nKetika kejadian Pasukan Pertahanan Palestin membantu Pasukan Kementerian Dalam Negeri Gaza memburu Geng Yasser Abu Shabab dan IOF datang untuk lindungi geng itu\n\nPM Israel Benjamin Netanyahu dan Ketua Turus IOF, Leftenan Jeneral Eyal Zamir mengadakan mesyuarat tergempar susulan situasi di Rafah ketika ini",
+                "link": "https://t.me/c/-1001873504794/21680"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21679,
+                "timestamp": "2025-10-19T10:25:14+00:00",
+                "message": "TERKINI \n\nUnit Radaa dari Pasukan Kementerian Dalam Negeri Gaza sedang melaksanakan operasi memburu Geng pengkhianat Yasser Abu Shabab di Timur Rafah",
+                "link": "https://t.me/c/-1001873504794/21679"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21674,
+                "timestamp": "2025-10-18T14:39:07+00:00",
+                "message": "TERKINI DAN RASMI \n\nALHAMDULILLAH \n\nKEDUTAAN BESAR PALESTIN DI KAHERAH MESIR MENGUMUMKAN LINTASAN RAFAH AKAN DIBUKA PADA 20 OKTOBER 2025\n\nKEUTAMAAN AWAL PEMBUKAAN LINTASAN RAFAH ADALAH UNTUK RAKYAT GAZA YANG DIRAWAT DI LUAR NEGARA PULANG KE GAZA",
+                "link": "https://t.me/c/-1001873504794/21674"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21658,
+                "timestamp": "2025-10-18T02:40:59+00:00",
+                "message": "TERKINI \n\nSumber dalaman Pentadbiran Hal Ehwal Awam Palestin memberitahu yang anggota Pasukan Pertahanan Palestin dan orang awam Palestin bersama Negara Arab dan Misi Kesatuan Eropah akan membantu mengawal Lintasan Rafah \n\nIsrael langsung tidak dibenarkan mengawal lintasan itu atau mempunyai apa apa peranan \n\nLintasan Rafah akan dibuka pertengahan minggu ini untuk sesiapa yang tercedera dirawat di luar negara atau sesiapa yang dirawat di luar untuk pulang ke Gaza\n\nMereka yang tercedera dibenarkan membawa 3 pengiring termasuk 2 anak. 2 minggu pertama Operasi pembukaan Lintasan Rafah akan tertumpu kepada membawa keluar rakyat Gaza yang cedera untuk dirawat sebelum diperluaskan kepada mahasiswa yang mahu ke luar negara untuk menyambung pelajaran dan pemegang Passport asing",
+                "link": "https://t.me/c/-1001873504794/21658"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21650,
+                "timestamp": "2025-10-17T13:55:04+00:00",
+                "message": "TERKINI \n\nALHAMDULILLAH \n\n5 trak bantuan kemanusiaan Malaysia dari Persatuan MyCare telah memasuki Gaza melalui Sempadan Rafah susulan perjanjian gencatan senjata antara Hamas dan Israel.\n\n4 buah Trak sebanyak 80 Tan Tepung dan sebuah trak membawa 1,000 Pek Makanan bernilai RM 360,000",
+                "link": "https://t.me/c/-1001873504794/21650"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21637,
+                "timestamp": "2025-10-17T10:17:32+00:00",
+                "message": "TERKINI \n\nWartawan Channel 12 Israel dan Axios Barak David memaklumkan yang US merancang hendak memulakan pembangunan semula Gaza di Rafah kerana Rafah bukan dalam kawalan Hamas dan masih dalam Zon Kuning IOF\n\nIni sebagai pembangunan contoh yang kemudiannya diperluaskan ke seluruh Semenanjung Gaza",
+                "link": "https://t.me/c/-1001873504794/21637"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21583,
+                "timestamp": "2025-10-15T15:00:08+00:00",
+                "message": "TERKINI \n\nLintasan Rafah dijangka dibuka esok dengan Misi Kesatuan Eropah akan ditempatkan di sana maklum 2 sumber kepada Reuters",
+                "link": "https://t.me/c/-1001873504794/21583"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21579,
+                "timestamp": "2025-10-15T14:44:09+00:00",
+                "message": "TERKINI \n\nALHAMDULILLAH \n\nBriged Al Qassam baru mendapat makluman seramai 7 ekor IOF dan 5 pengkhianat mampus dalam satu serang hendap dan letupan jerangkap samar di Kejiranan Al Nahda Timur Bandar Rafah pada 27 Julai 2025",
+                "link": "https://t.me/c/-1001873504794/21579"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21564,
+                "timestamp": "2025-10-15T13:02:04+00:00",
+                "message": "TERKINI \n\nPihak Berkuasa Palestin bersiap sedia untuk menguruskan Lintasan Rafah bermula hari ini\n\nSemua pihak berkepentingan sudah dimaklumkan",
+                "link": "https://t.me/c/-1001873504794/21564"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21554,
+                "timestamp": "2025-10-15T11:47:34+00:00",
+                "message": "TERKINI \n\nISRAEL LANGGAR LAGI GENCATAN SENJATA \n\nAL Mayadeen melaporkan Israel menangkap 15 Rakyat Gaza di Barat Laut Rafah tanpa sebab\n\nSedangkan mengikut gencatan senjata. Rakyat Gaza tak boleh ditangkap",
+                "link": "https://t.me/c/-1001873504794/21554"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21553,
+                "timestamp": "2025-10-15T11:45:38+00:00",
+                "message": "TERKINI \n\nPejabat Media Kerajaan Gaza memaklumkan Israel sudah langgar gencatan senjata sebanyak 14 kali dalam masa 3 hari ini \n\nAntaranya ialah pembunuhan 9 orang rakyat Gaza, Lintasan Rafah ditutup dan Israel hanya mahu membenarkan 300 daripada 600 buah trak yang sepatutnya masuk Gaza",
+                "link": "https://t.me/c/-1001873504794/21553"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21550,
+                "timestamp": "2025-10-15T11:15:28+00:00",
+                "message": "Israel hari ini cuba mengganggu bantuan kemanusiaan masuk ke Gaza dengan hanya mahu benarkan 300 trak sahaja masuk dari 400 buah yang sepatutnya masuk mengikut gencatan senjata dan kekal menutup Lintasan Rafah",
+                "link": "https://t.me/c/-1001873504794/21550"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21547,
+                "timestamp": "2025-10-15T10:35:51+00:00",
+                "message": "Al Mayadeen dan Pertubuhan Penyiaran Israel melaporkan Lintasan Rafah dibuka hari ini untuk bantuan kemanusiaan dari Mesir sahaja \n\nSebanyak 600 buah trak akan masuk hari ini melalui Lintasan Rafah",
+                "link": "https://t.me/c/-1001873504794/21547"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Rafah",
+                "message_id": 21516,
+                "timestamp": "2025-10-13T11:28:49+00:00",
+                "message": "Bas membawa tawanan Palestin dari penjara Israel mula menuju ke Gaza melalui Lintasan Kerem Shalom Rafah",
+                "link": "https://t.me/c/-1001873504794/21516"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Khan Younis",
+                "message_id": 22012,
+                "timestamp": "2025-10-29T07:47:59+00:00",
+                "message": "TERKINI \n\nJumlah yang gugur akibat serangan Israel di Gaza kini 91 orang termasuk 30 kanak kanak sejak Netanyahu mengarahkan IDF menyerang Gaza malam tadi\n\n31 terbunuh di Utara Gaza, 42 terbubar di Tengah Gaza dan 18 di Selatan Gaza . Jumlah dijangka meningkat kerana ada terperangkap di bawah runtuhan \n\nTurut terbunuh ialah Wartawan  Mohammad al-Munirawi dan isterinya dalam serangan di Saafin, Selatan Abu Srar di Kem Nusseirat Tengah Gaza (Gambar Kedua)\n\nVideo pertama memaparkan serangan Israel ke atas Khan Younis",
+                "link": "https://t.me/c/-1001873504794/22012"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Khan Younis",
+                "message_id": 21991,
+                "timestamp": "2025-10-29T04:19:23+00:00",
+                "message": "TERKINI \n\n63 disahkan terbunuh termasuk 24 Kanak kanak dalam serangan besar besaran Israel ke atas Gaza malam tadi\n\n5 daripadanya terbunuh di Yarmouk, Kem Al Shati Bandar Gaza \n\n8 daripadanya terbunuh dan 15 Cedera di Bandar Gaza dan Khan Younis",
+                "link": "https://t.me/c/-1001873504794/21991"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Khan Younis",
+                "message_id": 21931,
+                "timestamp": "2025-10-27T07:21:34+00:00",
+                "message": "Pertubuhan Palang Merah Antarabangsa sejak semalam hingga hari ini giat melaksanakan operasi mencari jenazah tawanan Israel di Gaza \n\nPihak Briged dilaporkan sudah memberi maklumat kepada persatuan itu berkenaan kedudukan mayat mayat itu di Rafah, Khan Younis, Deir Al Balah dan Bandar Gaza\n\nIsrael dilaporkan memberi lampu hijau kepada Pertubuhan Palang Merah Antarabangsa bagi mencari mayat tawanan Israel di Gaza di kawasan Rafah. Ini kerana lokasi itu di dalam Zon Kuning Gaza dikuasai Israel",
+                "link": "https://t.me/c/-1001873504794/21931"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Khan Younis",
+                "message_id": 21911,
+                "timestamp": "2025-10-27T04:24:04+00:00",
+                "message": "TERKINI \n\nSky News melaporkan terdapat 4 kumpulan militan yang disokong Israel di Gaza\n\n1) Militan Ashraf Al-Mansi di Utara Gaza\n\n2) Militan Rami Khals di Timur Bandar Gaza \n\n3) Militan Hossam Al Astal di Tengah Khan Younis Selatan Gaza \n\n4) Geng Yasser Abu Shabab di Timur Rafah Utara Gaza \n\nSemua 4 geng itu kini beroperasi dalam kawasan Zon Kuning yang IDF kuasai sebagai sebahagian daripada Perjanjian Gencatan Senjata Fasa 1",
+                "link": "https://t.me/c/-1001873504794/21911"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Khan Younis",
+                "message_id": 21772,
+                "timestamp": "2025-10-23T03:31:35+00:00",
+                "message": "TERKINI \n\nKenderaan IDF melepaskan tembakan bertubi-tubi di Timur Khan Younis Gaza",
+                "link": "https://t.me/c/-1001873504794/21772"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Khan Younis",
+                "message_id": 21726,
+                "timestamp": "2025-10-21T14:18:42+00:00",
+                "message": "TERKINI \n\n2 ekor IDF disahkan cedera terkena letupan  bom yang sebelum ini tak meletup di Khan Younis Gaza",
+                "link": "https://t.me/c/-1001873504794/21726"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Khan Younis",
+                "message_id": 21581,
+                "timestamp": "2025-10-15T14:59:31+00:00",
+                "message": "TERKINI \n\nIOF tembak mati rakyat Gaza di Timur Khan Younis Gaza \n\nJumlah terkorban kini 18 orang sejak gencatan senjata bermula",
+                "link": "https://t.me/c/-1001873504794/21581"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Khan Younis",
+                "message_id": 21540,
+                "timestamp": "2025-10-14T10:37:28+00:00",
+                "message": "TERKINI \n\nIDF LANGGAR GENCATAN SENJATA LAGI\n\nKementerian Kesihatan Gaza mengumumkan 9 rakyat Gaza disahkan terbunuh hari ini dengan 6 orang terbunuh di Kejiranan Shujaiya Bandar Gaza \n\n3 orang ditembak mati di Al Fukhari, Khan Younis \n\nSecara keseluruhannya 6 jenazah tiba di Hospital Baptist Al Ahli dan 3 orang di Kompleks Perubatan Nasser Khan Younis \n\nIDF mengumumkan bahawa mereka ditembak mati kerana melintas Zon Kuning tanpa kebenaran",
+                "link": "https://t.me/c/-1001873504794/21540"
+              },
+              {
+                "channel": "Irfan _ Newboys News",
+                "channel_id": -1001873504794,
+                "keyword": "Khan Younis",
+                "message_id": 21522,
+                "timestamp": "2025-10-13T13:05:07+00:00",
+                "message": "TERKINI \n\nAda tawanan Palestin yang dibebaskan Israel sudah tiba di rumah mereka di Khan Younis Gaza",
+                "link": "https://t.me/c/-1001873504794/21522"
+              },
+              {
+                "channel": "Berita Harian Online",
+                "channel_id": -1001004038660,
+                "keyword": "Rafah",
+                "message_id": 324999,
+                "timestamp": "2025-10-24T00:54:01+00:00",
+                "message": "WHO gesa pembukaan semula lintasan Rafah\nhttps://www.bharian.com.my/dunia/lain-lain/2025/10/1462544/who-gesa-pembukaan-semula-lintasan-rafah\n\nGENEVA: Pertubuhan Kesihatan Sedunia (WHO) menegaskan bantuan ke Gaza kini hanya “sebahagian kecil daripada apa yang diperlukan” ketika agensi kesihatan itu berusaha membangunkan semula sistem penjagaan kesihatan di wilayah berkenaan.",
+                "link": "https://t.me/c/-1001004038660/324999"
+              },
+              {
+                "channel": "Malaysiakini EN (Official)",
+                "channel_id": -1001005598668,
+                "keyword": "Rafah",
+                "message_id": 9468,
+                "timestamp": "2025-10-09T05:30:08+00:00",
+                "message": "Lawyer: FAM 'flogging dead horse' with 'wrong document' defence  [Read more]\n\n'Heritage' footballers met all requirements under my discretion - Saifuddin [Read more]\n\nCOMMENT | 48 words that shamed Malaysian football [Read more]\n\nYOURSAY | No to another ineffective RCI for 'heritage' players scandal [Read more]\n\nPBS hits back at 'reckless' corruption claims from Warisan leader [Read more]\n\nGovt mulls second Gaza humanitarian mission through Rafah: PM [Read more]\n\nIsrael, Hamas agree to first phase of peace deal - Trump [Read more]\n\n\n\nFollow Malaysiakini on Telegram: https://t.me/malaysiakini\nGet our free newsletter: https://bit.ly/MkiniNewsletterTG\n\n.",
+                "link": "https://t.me/c/-1001005598668/9468"
+              }
+            ]
+          },
+          "webhookUrl": "http://localhost:5678/webhook/telegram-keyword-feed",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Extract Search Query": {
+      "main": [
+        [
+          {
+            "node": "Search Google News",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Search for a post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Google News": {
+      "main": [
+        [
+          {
+            "node": "Process Google News Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Google News Results": {
+      "main": [
+        [
+          {
+            "node": "Assign Fields (Google)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Organize Data in Table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search for a post": {
+      "main": [
+        [
+          {
+            "node": "Process Reddit Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Consolidate Data1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Reddit Results": {
+      "main": [
+        [
+          {
+            "node": "Assign Fields (Reddit)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Consolidate Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent Alpha",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidate Data": {
+      "main": [
+        [
+          {
+            "node": "AI Agent Alpha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent Alpha",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Fields (Reddit)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Fields (Google)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Organize Data in Table": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Search Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text Configuration": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Save to High Risk Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save to Medium/Low Risk Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message": {
+      "main": [
+        []
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent Bravo",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent Bravo",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text Configuration1": {
+      "main": [
+        [
+          {
+            "node": "Categorization ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidate Data1": {
+      "main": [
+        [
+          {
+            "node": "Markdown Removal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to High Risk Database": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Categorization ": {
+      "main": [
+        [
+          {
+            "node": "Save to High Risk Database1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save to Medium/Low Risk Database1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Markdown Removal": {
+      "main": [
+        [
+          {
+            "node": "AI Agent Bravo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent Bravo": {
+      "main": [
+        [
+          {
+            "node": "Text Configuration1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent Alpha": {
+      "main": [
+        [
+          {
+            "node": "Text Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to High Risk Database1": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9cfe9a86-dd64-4bc2-98ac-664be23e0915",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a6337ce8d0f93f082c0ec6e63f24bd51e1668c9f859937d9bb58bcde930ce6de"
+  },
+  "id": "IW78kqxP5tyP7MSq",
+  "tags": []
+}
