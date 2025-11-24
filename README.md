@@ -4,6 +4,8 @@
 
 This n8n workflow automates content monitoring and risk classification from both Telegram and Webhook sources. It searches Reddit and Google News, processes the results, performs AI-powered risk analysis, and saves categorized data to Google Sheets.
 
+Initial workflow is created using the following Model Context Protocol (MCP): https://github.com/czlonkowski/n8n-mcp
+
 ## Workflow Architecture
 
 ### Trigger Nodes
